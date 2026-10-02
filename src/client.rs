@@ -5009,6 +5009,8 @@ pub async fn confirm_insecure_connection(
     interface: &impl Interface,
     receiver: &mut UnboundedReceiver<Data>,
 ) -> bool {
+    return true; // PATCH: auto-continue insecure connection (community server has no secure_tcp)
+    #[allow(unreachable_code)]
     interface.msgbox(
         "insecure-connection-nocancel-hasclose",
         "Insecure Connection",
