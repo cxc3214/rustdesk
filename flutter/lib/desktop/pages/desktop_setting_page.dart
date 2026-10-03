@@ -18,6 +18,7 @@ import 'package:flutter_hbb/models/printer_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:get/get.dart';
+import 'package:http/http.dart' as http;  // SimpleDesk patch
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
@@ -753,6 +754,109 @@ class _GeneralState extends State<_General> {
     return AudioInput(builder: builder, isCm: false, isVoiceCall: false);
   }
 
+  // ===== SimpleDesk patch: 上传录像到审计控制台 =====
+  static const String _simpleDeskDefaultUrl =
+      'https://desk.simplesoft.cn/audit-api/upload';
+  static const String _simpleDeskToken =
+      '6ada9fda217fe1203757501a71eb4fd3fa7a8a86db43b47466df4888ba518d0a';
+
+  String _simpleDeskUploadUrl() {
+    final v = bind.mainGetOption(key: 'simpledesk-upload-url').trim();
+    return v.isEmpty ? _simpleDeskDefaultUrl : v;
+  }
+
+  Future<void> _simpleDeskUpload(BuildContext context, List<String> dirs) async {
+    final uploadUrl = _simpleDeskUploadUrl();
+    const token = _simpleDeskToken;
+    final files = <File>[];
+    for (final d in dirs) {
+      if (d.isEmpty) continue;
+      final dir = Directory(d);
+      if (await dir.exists()) {
+        files.addAll(dir
+            .listSync()
+            .whereType<File>()
+            .where((f) => f.path.toLowerCase().endsWith('.webm')));
+      }
+    }
+    if (!context.mounted) return;
+    if (files.isEmpty) {
+      showDialog(
+          context: context,
+          builder: (c) => AlertDialog(
+                  title: const Text('上传录像'),
+                  content: const Text('没有找到可上传的录像文件（.webm）'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(c),
+                        child: const Text('知道了'))
+                  ]));
+      return;
+    }
+    final totalMB = files.fold<int>(
+            0, (sum, f) => sum + (f.lengthSync() ~/ 1048576));
+    final go = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+                title: const Text('上传录像到审计控制台'),
+                content: Text(
+                    '找到 ${files.length} 个录像文件（共约 $totalMB MB）\n上传后可在审计控制台查看回放。'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(c, false),
+                      child: const Text('取消')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(c, true),
+                      child: const Text('开始上传'))
+                ]));
+    if (go != true || !context.mounted) return;
+    final progress = ValueNotifier<int>(0);
+    showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (c) => AlertDialog(
+                title: const Text('正在上传…'),
+                content: ValueListenableBuilder<int>(
+                    valueListenable: progress,
+                    builder: (_, v, __) =>
+                        Text('$v / ${files.length}'))));
+    int okCnt = 0, failCnt = 0;
+    for (final f in files) {
+      try {
+        final req = http.MultipartRequest('POST', Uri.parse(uploadUrl))
+          ..headers['X-Auth-Token'] = token
+          ..files.add(await http.MultipartFile.fromPath('file', f.path,
+              filename: f.path.split(Platform.pathSeparator).last))
+          ..fields['meta'] = jsonEncode({
+            'peer_id': '',
+            'host_id': Platform.localHostname,
+            'note': '客户端手动上传'
+          });
+        final resp = await req.send().timeout(const Duration(minutes: 30));
+        if (resp.statusCode == 200) {
+          okCnt++;
+        } else {
+          failCnt++;
+        }
+      } catch (_) {
+        failCnt++;
+      }
+      progress.value++;
+    }
+    if (context.mounted) Navigator.pop(context);
+    if (!context.mounted) return;
+    showDialog(
+        context: context,
+        builder: (c) => AlertDialog(
+                title: const Text('上传完成'),
+                content: Text('成功 $okCnt 个${failCnt > 0 ? '，失败 $failCnt 个（可稍后重试）' : ''}'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(c),
+                      child: const Text('好'))
+                ]));
+  }
+
   Widget record(BuildContext context) {
     final showRootDir = isWindows && bind.mainIsInstalled();
     return futureBuilder(future: () async {
@@ -782,6 +886,30 @@ class _GeneralState extends State<_General> {
           _OptionCheckBox(context, 'Automatically record outgoing sessions',
               kOptionAllowAutoRecordOutgoing,
               isServer: false),
+        // ===== SimpleDesk patch: 手动上传按钮 + 可配置上传地址 =====
+        Row(children: [
+          const Text('上传地址:'),
+          Expanded(
+            child: TextFormField(
+              initialValue: _simpleDeskUploadUrl(),
+              decoration: const InputDecoration(
+                hintText: 'https://desk.simplesoft.cn/audit-api/upload',
+                helperText: '默认走公网域名；内网可改为 http://192.168.10.99:18090/api/upload',
+                isDense: true,
+              ),
+              onChanged: (v) => bind.mainSetOption(
+                  key: 'simpledesk-upload-url', value: v.trim()),
+            ).marginOnly(left: 10),
+          ),
+        ]).marginOnly(left: _kContentHMargin, top: 8),
+        Row(children: [
+          ElevatedButton.icon(
+            icon: const Icon(Icons.cloud_upload_outlined),
+            label: const Text('上传录像到审计控制台'),
+            onPressed: () => _simpleDeskUpload(
+                context, [user_dir, if (root_dir_exists) root_dir]),
+          ),
+        ]).marginOnly(left: _kContentHMargin, top: 8),
         if (showRootDir && !bind.isOutgoingOnly())
           Row(
             children: [
