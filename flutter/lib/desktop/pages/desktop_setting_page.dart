@@ -760,13 +760,13 @@ class _GeneralState extends State<_General> {
   static const String _simpleDeskToken =
       '3381a948237a8f844f0ee0d8444b89e5258680b58ee31005aea20ef5f0ce79ce';
 
-  String _simpleDeskUploadUrl() {
-    final v = bind.mainGetOption(key: 'simpledesk-upload-url').trim();
+  Future<String> _simpleDeskUploadUrl() async {
+    final v = (await bind.mainGetOption(key: 'simpledesk-upload-url')).trim();
     return v.isEmpty ? _simpleDeskDefaultUrl : v;
   }
 
   Future<void> _simpleDeskUpload(BuildContext context, List<String> dirs) async {
-    final uploadUrl = _simpleDeskUploadUrl();
+    final uploadUrl = await _simpleDeskUploadUrl();
     const token = _simpleDeskToken;
     final files = <File>[];
     for (final d in dirs) {
