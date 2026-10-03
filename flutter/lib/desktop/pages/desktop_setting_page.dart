@@ -890,16 +890,19 @@ class _GeneralState extends State<_General> {
         Row(children: [
           const Text('上传地址:'),
           Expanded(
-            child: TextFormField(
-              initialValue: _simpleDeskUploadUrl(),
-              decoration: const InputDecoration(
-                hintText: 'https://desk.simplesoft.cn/audit-api/upload',
-                helperText: '默认走公网域名；内网可改为 http://192.168.10.99:18090/api/upload',
-                isDense: true,
-              ),
-              onChanged: (v) => bind.mainSetOption(
-                  key: 'simpledesk-upload-url', value: v.trim()),
-            ).marginOnly(left: 10),
+            child: FutureBuilder<String>(
+              future: _simpleDeskUploadUrl(),
+              builder: (context, snap) => TextFormField(
+                initialValue: snap.data ?? '',
+                decoration: const InputDecoration(
+                  hintText: 'https://desk.simplesoft.cn/audit-api/upload',
+                  helperText: '默认走公网域名；内网可改为 http://192.168.10.99:18090/api/upload',
+                  isDense: true,
+                ),
+                onChanged: (v) => bind.mainSetOption(
+                    key: 'simpledesk-upload-url', value: v.trim()),
+              ).marginOnly(left: 10),
+            ),
           ),
         ]).marginOnly(left: _kContentHMargin, top: 8),
         Row(children: [
