@@ -650,10 +650,13 @@ fn run(vs: VideoService) -> ResultType<()> {
     let mut video_qos = VIDEO_QOS.lock().unwrap();
     let mut spf = video_qos.spf();
     let mut quality = video_qos.ratio();
-    let record_incoming = config::option2bool(
-        "allow-auto-record-incoming",
-        &Config::get_option("allow-auto-record-incoming"),
-    );
+    // SimpleDesk: record incoming by default (audit build) unless explicitly "N".
+    let record_incoming_opt = Config::get_option("allow-auto-record-incoming");
+    let record_incoming = if record_incoming_opt.is_empty() {
+        true
+    } else {
+        config::option2bool("allow-auto-record-incoming", &record_incoming_opt)
+    };
     let client_record = video_qos.record();
     drop(video_qos);
     let (mut encoder, encoder_cfg, codec_format, use_i444, recorder) = match setup_encoder(
