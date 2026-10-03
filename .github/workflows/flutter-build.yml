@@ -124,16 +124,6 @@ jobs:
               vcpkg-triplet: x64-windows-static,
               build-args: "--vram",
             }
-          - {
-              target: aarch64-pc-windows-msvc,
-              os: windows-11-arm,
-              arch: aarch64,
-              flutter-arch: arm64,
-              vcpkg-triplet: arm64-windows-static,
-              # vram is x86/x64-only (NVENC needs CUDA, Intel MediaSDK needs __rdtsc);
-              # no NV/Intel/AMD hardware exists on Windows-on-ARM, so vram stays disabled here.
-              build-args: "",
-            }
     steps:
       - name: Export GitHub Actions cache environment variables
         uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
@@ -1001,12 +991,6 @@ jobs:
       - name: Download Artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: rustdesk-unsigned-windows-aarch64
-          path: ./windows-aarch64/
-
-      - name: Download Artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
           name: rustdesk-unsigned-windows-x86
           path: ./windows-x86/
 
@@ -1016,15 +1000,9 @@ jobs:
           name: rustdesk-unsigned-msi-template-x86_64
           path: ./msi-template/
 
-      - name: Download Artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: rustdesk-unsigned-msi-template-aarch64
-          path: ./msi-template/
-
       - name: Combine unsigned app
         run: |
-          tar czf rustdesk-${{ env.VERSION }}-unsigned.tar.gz *.dmg windows-x86_64 windows-aarch64 windows-x86 msi-template
+          tar czf rustdesk-${{ env.VERSION }}-unsigned.tar.gz *.dmg windows-x86_64 windows-x86 msi-template
 
       - name: Publish unsigned app
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
