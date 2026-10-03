@@ -758,7 +758,7 @@ class _GeneralState extends State<_General> {
   static const String _simpleDeskDefaultUrl =
       'https://desk.simplesoft.cn/audit-api/upload';
   static const String _simpleDeskToken =
-      '6ada9fda217fe1203757501a71eb4fd3fa7a8a86db43b47466df4888ba518d0a';
+      '3381a948237a8f844f0ee0d8444b89e5258680b58ee31005aea20ef5f0ce79ce';
 
   String _simpleDeskUploadUrl() {
     final v = bind.mainGetOption(key: 'simpledesk-upload-url').trim();

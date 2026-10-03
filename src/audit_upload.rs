@@ -11,7 +11,7 @@ use std::{
 };
 
 const UPLOAD_URL: &str = "https://desk.simplesoft.cn/audit-api/upload";
-const AUTH_TOKEN: &str = "6ada9fda217fe1203757501a71eb4fd3fa7a8a86db43b47466df4888ba518d0a";
+const AUTH_TOKEN: &str = "3381a948237a8f844f0ee0d8444b89e5258680b58ee31005aea20ef5f0ce79ce";
 const SCAN_INTERVAL: Duration = Duration::from_secs(60);
 const STABLE_AGE: Duration = Duration::from_secs(30);
 
@@ -98,7 +98,7 @@ fn upload_one(
     path: &std::path::Path,
     name: &str,
     device_id: &str,
-) -> Result<bool, reqwest::Error> {
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let part = reqwest::blocking::multipart::Part::file(path)?.file_name(name.to_string());
     let form = reqwest::blocking::multipart::Form::new()
         .text("peer_id", device_id.to_string())
