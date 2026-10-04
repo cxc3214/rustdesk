@@ -755,20 +755,23 @@ class _GeneralState extends State<_General> {
   }
 
   // ===== SimpleDesk patch: 上传录像到审计控制台 =====
-  static const String _simpleDeskDefaultUrl =
+  static const String _simpleDeskLanUrl =
+      'http://192.168.10.99:18090/api/upload';
+  static const String _simpleDeskWanUrl =
       'https://desk.simplesoft.cn/audit-api/upload';
   // Injected at build time via --dart-define=SIMPLEDESK_AUDIT_TOKEN=<ci secret>.
   static const String _simpleDeskToken = String.fromEnvironment(
       'SIMPLEDESK_AUDIT_TOKEN',
       defaultValue: 'BUILD_TIME_PLACEHOLDER');
 
-  Future<String> _simpleDeskUploadUrl() async {
+  Future<List<String>> _simpleDeskUploadUrls() async {
     final v = (await bind.mainGetOption(key: 'simpledesk-upload-url')).trim();
-    return v.isEmpty ? _simpleDeskDefaultUrl : v;
+    if (v.isEmpty) return [_simpleDeskLanUrl, _simpleDeskWanUrl];
+    return v.split(RegExp(r'[,;\s]+')).where((e) => e.isNotEmpty).toList();
   }
 
   Future<void> _simpleDeskUpload(BuildContext context, List<String> dirs) async {
-    final uploadUrl = await _simpleDeskUploadUrl();
+    final uploadUrls = await _simpleDeskUploadUrls();
     const token = _simpleDeskToken;
     final files = <File>[];
     for (final d in dirs) {
@@ -824,23 +827,28 @@ class _GeneralState extends State<_General> {
                         Text('$v / ${files.length}'))));
     int okCnt = 0, failCnt = 0;
     for (final f in files) {
-      try {
-        final req = http.MultipartRequest('POST', Uri.parse(uploadUrl))
-          ..headers['X-Auth-Token'] = token
-          ..files.add(await http.MultipartFile.fromPath('file', f.path,
-              filename: f.path.split(Platform.pathSeparator).last))
-          ..fields['meta'] = jsonEncode({
-            'peer_id': '',
-            'host_id': Platform.localHostname,
-            'note': '客户端手动上传'
-          });
-        final resp = await req.send().timeout(const Duration(minutes: 30));
-        if (resp.statusCode == 200) {
-          okCnt++;
-        } else {
-          failCnt++;
-        }
-      } catch (_) {
+      var done = false;
+      for (final url in uploadUrls) {
+        try {
+          final req = http.MultipartRequest('POST', Uri.parse(url))
+            ..headers['X-Auth-Token'] = token
+            ..files.add(await http.MultipartFile.fromPath('file', f.path,
+                filename: f.path.split(Platform.pathSeparator).last))
+            ..fields['meta'] = jsonEncode({
+              'peer_id': '',
+              'host_id': Platform.localHostname,
+              'note': '客户端手动上传'
+            });
+          final resp = await req.send().timeout(const Duration(minutes: 30));
+          if (resp.statusCode == 200) {
+            done = true;
+            break;
+          }
+        } catch (_) {}
+      }
+      if (done) {
+        okCnt++;
+      } else {
         failCnt++;
       }
       progress.value++;
@@ -892,13 +900,13 @@ class _GeneralState extends State<_General> {
         Row(children: [
           const Text('上传地址:'),
           Expanded(
-            child: FutureBuilder<String>(
-              future: _simpleDeskUploadUrl(),
+            child: FutureBuilder<List<String>>(
+              future: _simpleDeskUploadUrls(),
               builder: (context, snap) => TextFormField(
-                initialValue: snap.data ?? '',
+                initialValue: snap.data?.join(', ') ?? '',
                 decoration: const InputDecoration(
-                  hintText: 'https://desk.simplesoft.cn/audit-api/upload',
-                  helperText: '默认走公网域名；内网可改为 http://192.168.10.99:18090/api/upload',
+                  hintText: '留空=自动：内网99优先，公网兜底',
+                  helperText: '可填自定义上传地址覆盖默认值；多个地址用逗号分隔，按填写顺序尝试',
                   isDense: true,
                 ),
                 onChanged: (v) => bind.mainSetOption(
