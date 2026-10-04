@@ -1630,6 +1630,7 @@ jobs:
             ls -l "${PWD}"
             ls -l /opt/artifacts/vcpkg/installed
           dockerRunArgs: |
+            --env "SIMPLEDESK_AUDIT_TOKEN"
             --volume "${PWD}:/workspace"
             --volume "/opt/artifacts:/opt/artifacts"
           shell: /bin/bash
@@ -1951,6 +1952,7 @@ jobs:
             ls -l "${PWD}"
             ls -l /opt/artifacts/vcpkg/installed
           dockerRunArgs: |
+            --env "SIMPLEDESK_AUDIT_TOKEN"
             --volume "${PWD}:/workspace"
             --volume "/opt/artifacts:/opt/artifacts"
           shell: /bin/bash
@@ -2232,6 +2234,7 @@ jobs:
           setup: |
             ls -l "${PWD}"
           dockerRunArgs: |
+            --env "SIMPLEDESK_AUDIT_TOKEN"
             --volume "${PWD}:/workspace"
           shell: /bin/bash
           install: |
@@ -2504,6 +2507,7 @@ jobs:
           setup: |
             ls -l "${PWD}"
           dockerRunArgs: |
+            --env "SIMPLEDESK_AUDIT_TOKEN"
             --volume "${PWD}:/workspace"
           shell: /bin/bash
           install: |
