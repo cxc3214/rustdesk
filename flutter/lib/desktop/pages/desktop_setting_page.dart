@@ -766,8 +766,16 @@ class _GeneralState extends State<_General> {
 
   Future<List<String>> _simpleDeskUploadUrls() async {
     final v = (await bind.mainGetOption(key: 'simpledesk-upload-url')).trim();
-    if (v.isEmpty) return [_simpleDeskLanUrl, _simpleDeskWanUrl];
-    return v.split(RegExp(r'[,;\s]+')).where((e) => e.isNotEmpty).toList();
+    final urls = <String>[];
+    if (v.isNotEmpty) {
+      for (final e in v.split(RegExp(r'[,;\s]+'))) {
+        if (e.isNotEmpty && !urls.contains(e)) urls.add(e);
+      }
+    }
+    for (final d in [_simpleDeskLanUrl, _simpleDeskWanUrl]) {
+      if (!urls.contains(d)) urls.add(d);
+    }
+    return urls;
   }
 
   Future<void> _simpleDeskUpload(BuildContext context, List<String> dirs) async {
@@ -905,8 +913,8 @@ class _GeneralState extends State<_General> {
               builder: (context, snap) => TextFormField(
                 initialValue: snap.data?.join(', ') ?? '',
                 decoration: const InputDecoration(
-                  hintText: '留空=自动：内网99优先，公网兜底',
-                  helperText: '可填自定义上传地址覆盖默认值；多个地址用逗号分隔，按填写顺序尝试',
+                  hintText: '可加自定义地址，逗号分隔调顺序',
+                  helperText: '默认永远包含：内网99优先→公网兜底；你填的地址会加进列表，按顺序尝试',
                   isDense: true,
                 ),
                 onChanged: (v) => bind.mainSetOption(

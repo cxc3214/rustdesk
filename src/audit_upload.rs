@@ -3,9 +3,10 @@
 //! inside the service process -- no external scripts or scheduled tasks.
 //!
 //! Upload endpoints are tried in priority order:
-//!   1. If the user set option "simpledesk-upload-url" (comma separated),
-//!      that list wins and is used in the given order (manual override).
-//!   2. Otherwise the built-in defaults: LAN (99) first, public domain last.
+//!   1. Entries the user set via option "simpledesk-upload-url" (comma
+//!      separated), in the given order -- manual entries add and reorder.
+//!   2. Built-in defaults (LAN 99 first, public domain) appended as
+//!      fallback when not already listed. Defaults are never dropped.
 
 use hbb_common::log;
 use std::{
@@ -26,23 +27,25 @@ const AUTH_TOKEN: &str = match option_env!("SIMPLEDESK_AUDIT_TOKEN") {
 const SCAN_INTERVAL: Duration = Duration::from_secs(60);
 const STABLE_AGE: Duration = Duration::from_secs(30);
 
-/// Ordered upload endpoints. Manual option (comma separated) overrides the
-/// built-in LAN-first / WAN-fallback default list.
+/// Ordered upload endpoints. Entries from the manual option
+/// (comma separated) come first in their given order; any built-in default
+/// (LAN 99, WAN domain) that is not already listed is appended as fallback,
+/// so the defaults are never lost -- manual input only adds and reorders.
 fn upload_urls() -> Vec<String> {
+    let mut urls: Vec<String> = Vec::new();
     let custom = hbb_common::config::Config::get_option("simpledesk-upload-url");
-    let custom = custom.trim();
-    if !custom.is_empty() {
-        let list: Vec<String> = custom
-            .split([',', ';', ' ', '\n'])
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect();
-        if !list.is_empty() {
-            return list;
+    for s in custom.trim().split([',', ';', ' ', '\n']) {
+        let s = s.trim();
+        if !s.is_empty() && !urls.iter().any(|u| u == s) {
+            urls.push(s.to_string());
         }
     }
-    vec![LAN_UPLOAD_URL.to_string(), WAN_UPLOAD_URL.to_string()]
+    for d in [LAN_UPLOAD_URL, WAN_UPLOAD_URL] {
+        if !urls.iter().any(|u| u == d) {
+            urls.push(d.to_string());
+        }
+    }
+    urls
 }
 
 pub fn start() {
