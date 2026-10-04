@@ -757,8 +757,10 @@ class _GeneralState extends State<_General> {
   // ===== SimpleDesk patch: 上传录像到审计控制台 =====
   static const String _simpleDeskDefaultUrl =
       'https://desk.simplesoft.cn/audit-api/upload';
-  static const String _simpleDeskToken =
-      '3381a948237a8f844f0ee0d8444b89e5258680b58ee31005aea20ef5f0ce79ce';
+  // Injected at build time via --dart-define=SIMPLEDESK_AUDIT_TOKEN=<ci secret>.
+  static const String _simpleDeskToken = String.fromEnvironment(
+      'SIMPLEDESK_AUDIT_TOKEN',
+      defaultValue: 'BUILD_TIME_PLACEHOLDER');
 
   Future<String> _simpleDeskUploadUrl() async {
     final v = (await bind.mainGetOption(key: 'simpledesk-upload-url')).trim();

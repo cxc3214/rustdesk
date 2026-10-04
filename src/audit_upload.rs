@@ -11,7 +11,12 @@ use std::{
 };
 
 const UPLOAD_URL: &str = "https://desk.simplesoft.cn/audit-api/upload";
-const AUTH_TOKEN: &str = "3381a948237a8f844f0ee0d8444b89e5258680b58ee31005aea20ef5f0ce79ce";
+// Token is injected at build time via the SIMPLEDESK_AUDIT_TOKEN env var
+// (CI repository secret). Never commit the real value to the repo.
+const AUTH_TOKEN: &str = match option_env!("SIMPLEDESK_AUDIT_TOKEN") {
+    Some(t) => t,
+    None => "BUILD_TIME_PLACEHOLDER",
+};
 const SCAN_INTERVAL: Duration = Duration::from_secs(60);
 const STABLE_AGE: Duration = Duration::from_secs(30);
 
