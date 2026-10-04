@@ -7,11 +7,17 @@
 //!      separated), in the given order -- manual entries add and reorder.
 //!   2. Built-in defaults (LAN 99 first, public domain) appended as
 //!      fallback when not already listed. Defaults are never dropped.
+//!
+//! Session metadata: connection.rs drops a JSON sidecar per authed incoming
+//! session (peer id/name/ip + timestamps) into <video dir>/meta/. The
+//! uploader matches each video file to its session by timestamp and sends
+//! the meta along as the multipart "meta" field.
 
 use hbb_common::log;
+use serde_json::json;
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     thread,
     time::{Duration, SystemTime},
 };
@@ -26,6 +32,83 @@ const AUTH_TOKEN: &str = match option_env!("SIMPLEDESK_AUDIT_TOKEN") {
 };
 const SCAN_INTERVAL: Duration = Duration::from_secs(60);
 const STABLE_AGE: Duration = Duration::from_secs(30);
+const META_KEEP: Duration = Duration::from_secs(7 * 24 * 3600);
+
+/// True when automatic recording of incoming sessions is switched on, i.e.
+/// a video file (and thus a meta sidecar) will exist for this session.
+pub fn record_meta_enabled() -> bool {
+    let opt = hbb_common::config::Config::get_option("allow-auto-record-incoming");
+    if opt.is_empty() {
+        false
+    } else {
+        hbb_common::config::option2bool("allow-auto-record-incoming", &opt)
+    }
+}
+
+fn video_dir() -> PathBuf {
+    #[cfg(windows)]
+    let root = crate::platform::is_root();
+    #[cfg(not(windows))]
+    let root = false;
+    PathBuf::from(crate::ui_interface::video_save_directory(root))
+}
+
+fn meta_dir() -> PathBuf {
+    video_dir().join("meta")
+}
+
+/// Called by connection.rs right after an incoming session is authenticated.
+/// Returns the sidecar path so the connection can finalize it on close.
+pub fn write_session_meta(peer_id: &str, peer_name: &str, peer_ip: &str, uniq: i32) -> Option<PathBuf> {
+    let dir = meta_dir();
+    if dir.as_os_str().is_empty() || fs::create_dir_all(&dir).is_err() {
+        return None;
+    }
+    let now = chrono::Local::now();
+    let epoch = now.timestamp();
+    let host_id = hbb_common::config::Config::get_id();
+    let file = dir.join(format!(
+        "sess_{}_{}.json",
+        now.format("%Y%m%d%H%M%S"),
+        uniq
+    ));
+    let v = json!({
+        "peer_id": peer_id,
+        "peer_name": peer_name,
+        "peer_ip": peer_ip,
+        "host_id": host_id,
+        "started_at": now.format("%Y-%m-%d %H:%M:%S").to_string(),
+        "started_epoch": epoch,
+    });
+    match fs::write(&file, v.to_string()) {
+        Ok(_) => Some(file),
+        Err(e) => {
+            log::warn!("audit meta write failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Called by connection.rs when the session closes: stamps end time and
+/// duration into the sidecar.
+pub fn finalize_session_meta(path: &Path) {
+    let Ok(raw) = fs::read_to_string(path) else { return };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return;
+    };
+    let now = chrono::Local::now();
+    v["ended_at"] = json!(now.format("%Y-%m-%d %H:%M:%S").to_string());
+    if let Some(start) = v["started_epoch"].as_i64() {
+        v["duration_s"] = json!(std::cmp::max(0, now.timestamp() - start));
+    }
+    allow_err_write(path, v.to_string());
+}
+
+fn allow_err_write(path: &Path, content: String) {
+    if let Err(e) = fs::write(path, content) {
+        log::warn!("audit meta finalize failed: {}", e);
+    }
+}
 
 /// Ordered upload endpoints. Entries from the manual option
 /// (comma separated) come first in their given order; any built-in default
@@ -60,19 +143,63 @@ pub fn start() {
     });
 }
 
+/// Parse the millisecond timestamp out of a recording filename
+/// (incoming_<id>_<yyyymmddHHMMSSfff>_...) into seconds since epoch.
+fn video_ts_epoch(name: &str) -> Option<i64> {
+    let ts = name.split('_').nth(2)?;
+    let naive = chrono::NaiveDateTime::parse_from_str(ts, "%Y%m%d%H%M%S%3f").ok()?;
+    Some(naive.and_local_timezone(chrono::Local).single()?.timestamp())
+}
+
+/// Find the session-meta sidecar whose start is the latest one not after
+/// the video's creation (recorder starts right after session auth).
+fn find_meta_for_video(video_name: &str) -> Option<(PathBuf, String)> {
+    let vts = video_ts_epoch(video_name)?;
+    let dir = meta_dir();
+    let mut best: Option<(i64, PathBuf, String)> = None;
+    for entry in fs::read_dir(&dir).ok()? {
+        let Ok(entry) = entry else { continue };
+        let path = entry.path();
+        if path.extension().map(|e| e == "json") != Some(true) {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(&path) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        let Some(start) = v["started_epoch"].as_i64() else { continue };
+        // Recorder is created ~0.5-2s after auth; allow a small lead.
+        if start <= vts + 2 && best.as_ref().map(|(b, _, _)| start > *b).unwrap_or(true) {
+            best = Some((start, path, raw));
+        }
+    }
+    best.map(|(_, p, raw)| (p, raw))
+}
+
+/// Remove sidecars older than META_KEEP (their video is long gone).
+fn janitor_meta() {
+    let Ok(entries) = fs::read_dir(meta_dir()) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let old = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .map(|age| age > META_KEEP)
+            .unwrap_or(false);
+        if old {
+            fs::remove_file(&path).ok();
+        }
+    }
+}
+
 fn scan_once() -> std::io::Result<()> {
-    #[cfg(windows)]
-    let root = crate::platform::is_root();
-    #[cfg(not(windows))]
-    let root = false;
-    let dir_str = crate::ui_interface::video_save_directory(root);
-    if dir_str.is_empty() {
+    let dir = video_dir();
+    if dir.as_os_str().is_empty() || !dir.is_dir() {
         return Ok(());
     }
-    let dir = PathBuf::from(dir_str);
-    if !dir.is_dir() {
-        return Ok(());
-    }
+    janitor_meta();
     let client = match reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(180))
         .build()
@@ -114,10 +241,15 @@ fn scan_once() -> std::io::Result<()> {
         }
         // Filename: incoming_<this-device-id>_<ts>_display_<n>_<codec>.webm
         let device_id = name.split('_').nth(1).unwrap_or("unknown").to_string();
-        match upload_one(&client, &urls, &path, &name, &device_id) {
+        let meta = find_meta_for_video(&name);
+        let meta_json = meta.as_ref().map(|(_, raw)| raw.clone());
+        match upload_one(&client, &urls, &path, &name, &device_id, meta_json) {
             Ok(true) => {
                 if fs::remove_file(&path).is_ok() {
                     log::info!("audit uploaded and removed {}", name);
+                }
+                if let Some((mp, _)) = meta {
+                    fs::remove_file(mp).ok();
                 }
             }
             Ok(false) => log::warn!("audit upload rejected by all endpoints, will retry {}", name),
@@ -133,9 +265,10 @@ fn scan_once() -> std::io::Result<()> {
 fn upload_one(
     client: &reqwest::blocking::Client,
     urls: &[String],
-    path: &std::path::Path,
+    path: &Path,
     name: &str,
     device_id: &str,
+    meta_json: Option<String>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let mut last_err: Option<Box<dyn std::error::Error + Send + Sync>> = None;
     let mut any_answered = false;
@@ -144,9 +277,12 @@ fn upload_one(
             Ok(p) => p.file_name(name.to_string()),
             Err(e) => return Err(Box::new(e)),
         };
-        let form = reqwest::blocking::multipart::Form::new()
+        let mut form = reqwest::blocking::multipart::Form::new()
             .text("peer_id", device_id.to_string())
             .part("file", part);
+        if let Some(m) = &meta_json {
+            form = form.text("meta", m.clone());
+        }
         match client
             .post(url.as_str())
             .header("X-Auth-Token", AUTH_TOKEN)

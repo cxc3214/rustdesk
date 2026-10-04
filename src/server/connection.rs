@@ -447,6 +447,8 @@ pub struct Connection {
     tx_post_seq: mpsc::UnboundedSender<(String, Value)>,
     conn_audit_primary_auth: ConnAuditPrimaryAuth,
     conn_audit_two_factor: ConnAuditTwoFactor,
+    // SimpleDesk audit: session-meta sidecar written for the recording uploader.
+    audit_meta_file: Option<std::path::PathBuf>,
     // Tracks read job IDs delegated to CM process.
     // When a read job is delegated to CM (via FS::ReadFile), the job id is added here.
     // Used to filter stale responses (FileBlockFromCM, FileReadDone, etc.) for
@@ -658,6 +660,7 @@ impl Connection {
             terminal_generic_service: None,
             conn_audit_primary_auth: ConnAuditPrimaryAuth::None,
             conn_audit_two_factor: ConnAuditTwoFactor::None,
+            audit_meta_file: None,
         };
         let addr = hbb_common::try_into_v4(addr);
         if !conn.on_open(addr).await {
@@ -1227,6 +1230,10 @@ impl Connection {
         conn.post_conn_audit(json!({
             "action": "close",
         }));
+        // SimpleDesk audit: stamp end time + duration into the sidecar.
+        if let Some(p) = conn.audit_meta_file.take() {
+            crate::audit_upload::finalize_session_meta(&p);
+        }
         if let Some(s) = conn.server.upgrade() {
             let mut s = s.write().unwrap();
             s.remove_connection(&conn.inner);
@@ -1929,6 +1936,16 @@ impl Connection {
             audit["two_factor"] = json!(self.conn_audit_two_factor.as_i64());
         }
         self.post_conn_audit(audit);
+        // SimpleDesk audit: drop the session-meta sidecar now that the peer
+        // identity is known; finalized with end time on connection close.
+        if crate::audit_upload::record_meta_enabled() {
+            self.audit_meta_file = crate::audit_upload::write_session_meta(
+                &self.lr.my_id,
+                &self.lr.my_name,
+                &self.ip,
+                self.inner.id,
+            );
+        }
         #[allow(unused_mut)]
         let mut username = crate::platform::get_active_username();
         let mut res = LoginResponse::new();

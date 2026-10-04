@@ -730,6 +730,8 @@ fn run(vs: VideoService) -> ResultType<()> {
     let repeat_encode_max = 10;
     let mut encode_fail_counter = 0;
     let mut first_frame = true;
+    // SimpleDesk: when the first frame watchdog started (loop entry).
+    let first_frame_begin = Instant::now();
     let capture_width = c.width;
     let capture_height = c.height;
     let (mut second_instant, mut send_counter) = (Instant::now(), 0);
@@ -899,6 +901,19 @@ fn run(vs: VideoService) -> ResultType<()> {
                 {
                     would_block_count += 1;
                     if !is_x11() {
+                        // SimpleDesk: a session whose hardware encoder never
+                        // produces its first frame (silent nvenc stall, seen
+                        // with driver 595) falls back to software encoding via
+                        // the existing SWITCH path, which also recreates the
+                        // wayland capturer.
+                        if first_frame
+                            && first_frame_begin.elapsed() > Duration::from_secs(8)
+                            && encoder.is_hardware()
+                        {
+                            log::error!("SimpleDesk: first-frame timeout with hw encoder, switch to software");
+                            encoder.disable();
+                            bail!("SWITCH");
+                        }
                         if would_block_count >= 100 {
                             // to-do: Unknown reason for WouldBlock 100 times (seconds = 100 * 1 / fps)
                             // https://github.com/rustdesk/rustdesk/blob/63e6b2f8ab51743e77a151e2b7ff18816f5fa2fb/libs/scrap/src/common/wayland.rs#L81
