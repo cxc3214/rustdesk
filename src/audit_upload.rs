@@ -176,6 +176,49 @@ fn find_meta_for_video(video_name: &str) -> Option<(PathBuf, String)> {
     best.map(|(_, p, raw)| (p, raw))
 }
 
+/// Sessions whose video was uploaded while still open get their end time
+/// patched into the server DB once they close.
+fn finalize_pass(client: &reqwest::blocking::Client, urls: &[String]) {
+    let Ok(entries) = fs::read_dir(meta_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map(|e| e == "json") != Some(true) {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        if v["uploaded"].as_bool() != Some(true)
+            || v["ended_at"].is_null()
+            || v["finalized_sent"].as_bool() == Some(true)
+        {
+            continue;
+        }
+        for url in urls {
+            let res = client
+                .post(url.as_str())
+                .header("X-Auth-Token", AUTH_TOKEN)
+                .multipart(reqwest::blocking::multipart::Form::new().text("meta", raw.clone()))
+                .send();
+            match res {
+                Ok(r) if r.status().is_success() => {
+                    v["finalized_sent"] = json!(true);
+                    allow_err_write(&path, v.to_string());
+                    log::info!("audit finalize sent for {:?}", path.file_name());
+                    break;
+                }
+                Ok(r) => log::warn!("audit finalize rejected by {} (status {})", url, r.status()),
+                Err(e) => log::warn!("audit finalize unreachable via {}: {}", url, e),
+            }
+        }
+    }
+}
+
 /// Remove sidecars older than META_KEEP (their video is long gone).
 fn janitor_meta() {
     let Ok(entries) = fs::read_dir(meta_dir()) else { return };
@@ -248,14 +291,21 @@ fn scan_once() -> std::io::Result<()> {
                 if fs::remove_file(&path).is_ok() {
                     log::info!("audit uploaded and removed {}", name);
                 }
-                if let Some((mp, _)) = meta {
-                    fs::remove_file(mp).ok();
+                // Keep the sidecar and stamp the uploaded video name, so that
+                // session close can patch ended_at/duration into the server DB.
+                if let Some((mp, raw)) = meta {
+                    if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                        v["video"] = json!(name);
+                        v["uploaded"] = json!(true);
+                        allow_err_write(&mp, v.to_string());
+                    }
                 }
             }
             Ok(false) => log::warn!("audit upload rejected by all endpoints, will retry {}", name),
             Err(e) => log::warn!("audit upload failed for {}: {}", name, e),
         }
     }
+    finalize_pass(&client, &urls);
     Ok(())
 }
 
