@@ -285,6 +285,42 @@ fn scan_once() -> std::io::Result<()> {
         // Filename: incoming_<this-device-id>_<ts>_display_<n>_<codec>.webm
         let device_id = name.split('_').nth(1).unwrap_or("unknown").to_string();
         let meta = find_meta_for_video(&name);
+        // A static screen stops the encoder, which can fool the stability
+        // check into uploading mid-session and truncating the recording.
+        // The sidecar only gets ended_at when the session closes, so an
+        // unfinalized meta means "still recording": wait for the close.
+        if let Some((_, ref raw)) = meta {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+                if v["ended_at"].is_null() {
+                    continue;
+                }
+            }
+        }
+        // Zero-frame files (header-only, ~44B) carry no evidence; record the
+        // session through a meta-only post instead of a useless empty video.
+        let fsize = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        if fsize < 1024 {
+            match meta {
+                Some((mp, raw)) => match upload_meta_only(&client, &urls, &raw, &name) {
+                    Ok(true) => {
+                        fs::remove_file(&path).ok();
+                        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) {
+                            v["video"] = json!(name);
+                            v["uploaded"] = json!(true);
+                            v["finalized_sent"] = json!(true);
+                            allow_err_write(&mp, v.to_string());
+                        }
+                        log::info!("audit zero-frame session recorded (meta only): {}", name);
+                    }
+                    _ => log::warn!("audit zero-frame meta post failed, will retry {}", name),
+                },
+                None => {
+                    fs::remove_file(&path).ok();
+                    log::info!("audit dropped empty recording without meta: {}", name);
+                }
+            }
+            continue;
+        }
         let meta_json = meta.as_ref().map(|(_, raw)| raw.clone());
         match upload_one(&client, &urls, &path, &name, &device_id, meta_json) {
             Ok(true) => {
@@ -307,6 +343,40 @@ fn scan_once() -> std::io::Result<()> {
     }
     finalize_pass(&client, &urls);
     Ok(())
+}
+
+/// POST a meta sidecar without a video file: used for zero-frame sessions
+/// (the PHP side then inserts a metadata-only row) and for finalize patches.
+/// Returns Ok(true) when some endpoint accepted it.
+fn upload_meta_only(
+    client: &reqwest::blocking::Client,
+    urls: &[String],
+    meta_raw: &str,
+    video_name: &str,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let mut v: serde_json::Value = serde_json::from_str(meta_raw)?;
+    v["video"] = json!(video_name);
+    let body = v.to_string();
+    let mut any_answered = false;
+    for url in urls {
+        match client
+            .post(url.as_str())
+            .header("X-Auth-Token", AUTH_TOKEN)
+            .multipart(reqwest::blocking::multipart::Form::new().text("meta", body.clone()))
+            .send()
+        {
+            Ok(r) => {
+                any_answered = true;
+                if r.status().is_success() {
+                    return Ok(true);
+                }
+                log::warn!("audit meta post rejected by {} (status {})", url, r.status());
+            }
+            Err(e) => log::warn!("audit meta post unreachable via {}: {}", url, e),
+        }
+    }
+    let _ = any_answered;
+    Ok(false)
 }
 
 /// Try each endpoint in priority order; the first 2xx wins. Network errors
