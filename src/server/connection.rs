@@ -1597,8 +1597,8 @@ impl Connection {
         // Runs even when the API audit server is unset.
         if let Some(p) = &self.audit_meta_file {
             let dir = match r#type {
-                FileAuditType::RemoteSend => send,
-                FileAuditType::RemoteReceive => recv,
+                FileAuditType::RemoteSend => "send",
+                FileAuditType::RemoteReceive => "recv",
             };
             crate::audit_upload::append_file_event(p, dir, path, &files);
         }

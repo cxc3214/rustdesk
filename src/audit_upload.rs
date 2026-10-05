@@ -117,15 +117,15 @@ pub fn append_file_event(path: &Path, dir: &str, op_path: &str, items: &[(String
         return;
     };
     let ev = json!({
-        ts: chrono::Local::now().format(%Y-%m-%d %H:%M:%S).to_string(),
-        dir: dir,
-        path: op_path,
-        items: items,
+        "ts": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        "dir": dir,
+        "path": op_path,
+        "items": items,
     });
-    if !v[files].is_array() {
-        v[files] = json!([]);
+    if !v["files"].is_array() {
+        v["files"] = json!([]);
     }
-    if let Some(arr) = v[files].as_array_mut() {
+    if let Some(arr) = v["files"].as_array_mut() {
         arr.push(ev);
         allow_err_write(path, v.to_string());
     }
