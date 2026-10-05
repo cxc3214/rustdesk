@@ -104,6 +104,33 @@ pub fn finalize_session_meta(path: &Path) {
     allow_err_write(path, v.to_string());
 }
 
+/// Called by connection.rs (post_file_audit) on every file-transfer event of
+/// this session: file-manager send/receive, remote print, and clipboard file
+/// paste in both directions. Appends the event to the sidecar's files
+/// array, so the audit console can link file ops to this exact session
+/// recording (the sidecar rides the same meta upload channel as the video).
+pub fn append_file_event(path: &Path, dir: &str, op_path: &str, items: &[(String, i64)]) {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return;
+    };
+    let ev = json!({
+        ts: chrono::Local::now().format(%Y-%m-%d %H:%M:%S).to_string(),
+        dir: dir,
+        path: op_path,
+        items: items,
+    });
+    if !v[files].is_array() {
+        v[files] = json!([]);
+    }
+    if let Some(arr) = v[files].as_array_mut() {
+        arr.push(ev);
+        allow_err_write(path, v.to_string());
+    }
+}
+
 fn allow_err_write(path: &Path, content: String) {
     if let Err(e) = fs::write(path, content) {
         log::warn!("audit meta finalize failed: {}", e);

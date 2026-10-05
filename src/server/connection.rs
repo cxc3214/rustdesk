@@ -1592,6 +1592,16 @@ impl Connection {
         files: Vec<(String, i64)>,
         info: Value,
     ) {
+        // SimpleDesk audit: mirror every file-transfer event into the session
+        // sidecar (links file ops to the session recording in our console).
+        // Runs even when the API audit server is unset.
+        if let Some(p) = &self.audit_meta_file {
+            let dir = match r#type {
+                FileAuditType::RemoteSend => send,
+                FileAuditType::RemoteReceive => recv,
+            };
+            crate::audit_upload::append_file_event(p, dir, path, &files);
+        }
         if self.server_audit_file.is_empty() {
             return;
         }
@@ -6473,6 +6483,7 @@ pub enum AlarmAuditType {
     IdWhitelist = 10,
 }
 
+#[derive(Clone, Copy)]
 pub enum FileAuditType {
     RemoteSend = 0,
     RemoteReceive = 1,
