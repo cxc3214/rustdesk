@@ -898,8 +898,15 @@ class _GeneralState extends State<_General> {
       bool user_dir_exists = map['user_dir_exists']!;
       return _Card(title: 'Recording', children: [
         if (!bind.isOutgoingOnly())
+          // SimpleDesk patch: 空配置默认视为开启（与 video_service.rs 默认录像一致）
           _OptionCheckBox(context, 'Automatically record incoming sessions',
-              kOptionAllowAutoRecordIncoming),
+              kOptionAllowAutoRecordIncoming, optGetter: () {
+            final v = bind.mainGetOptionSync(
+                key: kOptionAllowAutoRecordIncoming);
+            return v.isEmpty
+                ? true
+                : option2bool(kOptionAllowAutoRecordIncoming, v);
+          }),
         if (!bind.isIncomingOnly())
           _OptionCheckBox(context, 'Automatically record outgoing sessions',
               kOptionAllowAutoRecordOutgoing,

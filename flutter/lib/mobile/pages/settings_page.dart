@@ -124,8 +124,12 @@ class _SettingsState extends State<SettingsPage> with WidgetsBindingObserver {
     _allowInsecureTlsFallback =
         mainGetBoolOptionSync(kOptionAllowInsecureTLSFallback);
     _disableUdp = bind.mainGetOptionSync(key: kOptionDisableUdp) == 'Y';
-    _autoRecordIncomingSession = option2bool(kOptionAllowAutoRecordIncoming,
-        bind.mainGetOptionSync(key: kOptionAllowAutoRecordIncoming));
+    // SimpleDesk patch: 空配置默认视为开启（与 video_service.rs 默认录像一致）
+    final optAutoRecIn =
+        bind.mainGetOptionSync(key: kOptionAllowAutoRecordIncoming);
+    _autoRecordIncomingSession = optAutoRecIn.isEmpty
+        ? true
+        : option2bool(kOptionAllowAutoRecordIncoming, optAutoRecIn);
     _autoRecordOutgoingSession = option2bool(kOptionAllowAutoRecordOutgoing,
         bind.mainGetLocalOption(key: kOptionAllowAutoRecordOutgoing));
     _localIP = bind.mainGetOptionSync(key: 'local-ip-addr');
