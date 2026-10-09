@@ -182,7 +182,10 @@ fn check_update(manually: bool) -> ResultType<()> {
     }
     #[cfg(target_os = "windows")]
     let update_msi = crate::platform::is_msi_installed()? && !crate::is_custom_client();
-    if !(manually || config::Config::get_bool_option(keys::OPTION_ALLOW_AUTO_UPDATE)) {
+    // SimpleDesk: auto-update defaults ON for our fleet; set allow-auto-update=N to opt out.
+    let simpledesk_auto = crate::is_custom_client()
+        && config::Config::get_option(keys::OPTION_ALLOW_AUTO_UPDATE) != "N";
+    if !(manually || config::Config::get_bool_option(keys::OPTION_ALLOW_AUTO_UPDATE) || simpledesk_auto) {
         return Ok(());
     }
     if do_check_software_update().is_err() {
@@ -197,7 +200,21 @@ fn check_update(manually: bool) -> ResultType<()> {
         let download_url = update_url.replace("tag", "download");
         let version = download_url.split('/').last().unwrap_or_default();
         #[cfg(target_os = "windows")]
-        let download_url = if cfg!(feature = "flutter") {
+        let download_url = if crate::is_custom_client() {
+            // SimpleDesk-1.5.0.1-Windows-x86_64.exe on our own download site.
+            let Some(arch) = crate::platform::windows::release_arch_suffix() else {
+                bail!(
+                    "Unsupported Windows release architecture: {}",
+                    std::env::consts::ARCH
+                );
+            };
+            format!(
+                "{}/SimpleDesk-{}-Windows-{}.exe",
+                crate::common::SIMPLEDESK_DOWNLOAD_BASE,
+                version,
+                arch
+            )
+        } else if cfg!(feature = "flutter") {
             let Some(arch) = crate::platform::windows::release_arch_suffix() else {
                 bail!(
                     "Unsupported Windows release architecture: {}",

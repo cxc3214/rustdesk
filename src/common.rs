@@ -93,6 +93,9 @@ pub mod input {
 
 lazy_static::lazy_static! {
     pub static ref SOFTWARE_UPDATE_URL: Arc<Mutex<String>> = Default::default();
+    // SimpleDesk: set when latest.json demands a mandatory update (force &&
+    // min_version > current). The updater daemon keeps nagging/retrying.
+    pub static ref SIMPLEDESK_FORCE_UPDATE_REQUIRED: Arc<Mutex<bool>> = Default::default();
     pub static ref DEVICE_ID: Arc<Mutex<String>> = Default::default();
     pub static ref DEVICE_NAME: Arc<Mutex<String>> = Default::default();
     static ref PUBLIC_IPV6_ADDR: Arc<Mutex<(Option<SocketAddr>, Option<Instant>)>> = Default::default();
@@ -1019,6 +1022,8 @@ pub fn is_modifier(evt: &KeyEvent) -> bool {
 
 pub fn check_software_update() {
     if is_custom_client() {
+        // SimpleDesk: check our own download site, always on for our fleet.
+        std::thread::spawn(move || allow_err!(do_check_software_update()));
         return;
     }
     let opt = LocalConfig::get_option(keys::OPTION_ENABLE_CHECK_UPDATE);
@@ -1031,6 +1036,9 @@ pub fn check_software_update() {
 // Because the url is always `https://api.rustdesk.com/version/latest`.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
+    if is_custom_client() {
+        return simpledesk_do_check_software_update().await;
+    }
     let (request, url) =
         hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
     let proxy_conf = Config::get_socks();
@@ -1072,6 +1080,65 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
             }
         }
         *SOFTWARE_UPDATE_URL.lock().unwrap() = response_url;
+    } else {
+        *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
+    }
+    Ok(())
+}
+
+// ---- SimpleDesk custom update check ----
+//
+// Official clients ask https://api.rustdesk.com/version/latest, which refuses
+// custom clients, so we poll a static JSON on our own download site instead:
+//   https://desk.simplesoft.cn/downloads/latest.json
+//   {"version":"1.5.0.1","min_version":"1.5.0","force":false,"notes":"..."}
+//
+// The `version` field is compared against SIMPLEDESK_VERSION below. Cargo
+// requires 3-part semver, so our 4th release component lives in this const -
+// BUMP IT on every release, and bump latest.json on the download site.
+pub const SIMPLEDESK_UPDATE_META_URL: &str =
+    "https://desk.simplesoft.cn/downloads/latest.json";
+pub const SIMPLEDESK_VERSION: &str = "1.5.0.1";
+pub const SIMPLEDESK_DOWNLOAD_BASE: &str = "https://desk.simplesoft.cn/downloads";
+
+async fn simpledesk_do_check_software_update() -> hbb_common::ResultType<()> {
+    let client = create_http_client_async(TlsType::Rustls, false);
+    let resp = client
+        .get(SIMPLEDESK_UPDATE_META_URL)
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await?;
+    let v: serde_json::Value = resp.json().await?;
+    let latest_version = v
+        .get("version")
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if latest_version.is_empty() {
+        return Ok(());
+    }
+    let min_version = v
+        .get("min_version")
+        .and_then(|x| x.as_str())
+        .unwrap_or_default();
+    let force = v.get("force").and_then(|x| x.as_bool()).unwrap_or(false);
+    let cur = get_version_number(SIMPLEDESK_VERSION);
+    *SIMPLEDESK_FORCE_UPDATE_REQUIRED.lock().unwrap() =
+        force && !min_version.is_empty() && get_version_number(min_version) > cur;
+    if get_version_number(&latest_version) > cur {
+        // Last path segment must be the bare version: the updater derives the
+        // installer filename from it (see updater::check_update).
+        let page_url = format!("{}/tag/{}", SIMPLEDESK_DOWNLOAD_BASE, latest_version);
+        #[cfg(feature = "flutter")]
+        {
+            let mut m = HashMap::new();
+            m.insert("name", "check_software_update_finish");
+            m.insert("url", &page_url);
+            if let Ok(data) = serde_json::to_string(&m) {
+                let _ = crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, data);
+            }
+        }
+        *SOFTWARE_UPDATE_URL.lock().unwrap() = page_url;
     } else {
         *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
     }
