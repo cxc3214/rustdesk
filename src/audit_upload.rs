@@ -61,7 +61,14 @@ fn meta_dir() -> PathBuf {
 
 /// Called by connection.rs right after an incoming session is authenticated.
 /// Returns the sidecar path so the connection can finalize it on close.
-pub fn write_session_meta(peer_id: &str, peer_name: &str, peer_ip: &str, uniq: i32) -> Option<PathBuf> {
+pub fn write_session_meta(
+    peer_id: &str,
+    peer_name: &str,
+    peer_ip: &str,
+    uniq: i32,
+    stype: &str,
+    detail: &str,
+) -> Option<PathBuf> {
     let dir = meta_dir();
     if dir.as_os_str().is_empty() || fs::create_dir_all(&dir).is_err() {
         return None;
@@ -79,6 +86,8 @@ pub fn write_session_meta(peer_id: &str, peer_name: &str, peer_ip: &str, uniq: i
         "peer_name": peer_name,
         "peer_ip": peer_ip,
         "host_id": host_id,
+        "type": stype,
+        "detail": detail,
         "started_at": now.format("%Y-%m-%d %H:%M:%S").to_string(),
         "started_epoch": epoch,
     });
@@ -370,8 +379,77 @@ fn scan_once() -> std::io::Result<()> {
             Err(e) => log::warn!("audit upload failed for {}: {}", name, e),
         }
     }
+    meta_pass(&client, &urls);
     finalize_pass(&client, &urls);
     Ok(())
+}
+
+/// Terminal/tunnel/camera/file sessions record no video, so nothing would
+/// ever pick up their sidecar. Post the meta right after the session
+/// closes (fire and forget); failures are retried by meta_pass on the next
+/// scan cycle. Desktop sidecars stay with the video pipeline.
+pub fn report_session_meta_now(path: PathBuf) {
+    let Ok(raw) = fs::read_to_string(&path) else { return };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else { return };
+    if v["type"].as_str().unwrap_or("desktop") == "desktop" {
+        return;
+    }
+    let urls = upload_urls();
+    if urls.is_empty() {
+        return;
+    }
+    thread::spawn(move || {
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        match upload_meta_only(&client, &urls, &raw, "") {
+            Ok(true) => {
+                fs::remove_file(&path).ok();
+                log::info!("audit non-video session meta reported");
+            }
+            Ok(false) => log::warn!("audit non-video meta rejected, scan will retry"),
+            Err(e) => log::warn!("audit non-video meta post failed, scan will retry: {}", e),
+        }
+    });
+}
+
+/// Retry pass for closed non-video session sidecars whose close-time report
+/// failed (offline, reboot...). Skips anything younger than 60s so the
+/// close-time report gets a head start and we do not double-post.
+fn meta_pass(client: &reqwest::blocking::Client, urls: &[String]) {
+    let Ok(entries) = fs::read_dir(meta_dir()) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().map(|e| e == "json") != Some(true) {
+            continue;
+        }
+        let fresh = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .map(|age| age < Duration::from_secs(60))
+            .unwrap_or(false);
+        if fresh {
+            continue;
+        }
+        let Ok(raw) = fs::read_to_string(&path) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else { continue };
+        if v["type"].as_str().unwrap_or("desktop") == "desktop" {
+            continue;
+        }
+        if v["ended_at"].is_null() || v["uploaded"].as_bool() == Some(true) {
+            continue;
+        }
+        if let Ok(true) = upload_meta_only(client, urls, &raw, "") {
+            fs::remove_file(&path).ok();
+            log::info!("audit non-video session meta retry succeeded");
+        }
+    }
 }
 
 /// POST a meta sidecar without a video file: used for zero-frame sessions

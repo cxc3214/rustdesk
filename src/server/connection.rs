@@ -1233,6 +1233,9 @@ impl Connection {
         // SimpleDesk audit: stamp end time + duration into the sidecar.
         if let Some(p) = conn.audit_meta_file.take() {
             crate::audit_upload::finalize_session_meta(&p);
+            // Terminal/tunnel/camera/file sessions have no recording for
+            // the uploader to find: post their meta directly.
+            crate::audit_upload::report_session_meta_now(p);
         }
         if let Some(s) = conn.server.upgrade() {
             let mut s = s.write().unwrap();
@@ -1949,11 +1952,20 @@ impl Connection {
         // SimpleDesk audit: drop the session-meta sidecar now that the peer
         // identity is known; finalized with end time on connection close.
         if crate::audit_upload::record_meta_enabled() {
+            let (stype, detail) = match conn_type {
+                1 => ("file", String::new()),
+                2 => ("tunnel", self.port_forward_address.clone()),
+                3 => ("camera", String::new()),
+                4 => ("terminal", String::new()),
+                _ => ("desktop", String::new()),
+            };
             self.audit_meta_file = crate::audit_upload::write_session_meta(
                 &self.lr.my_id,
                 &self.lr.my_name,
                 &self.ip,
                 self.inner.id,
+                stype,
+                &detail,
             );
         }
         #[allow(unused_mut)]
