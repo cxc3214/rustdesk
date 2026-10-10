@@ -301,6 +301,16 @@ fn upload_urls() -> Vec<String> {
             urls.push(s.to_string());
         }
     }
+    // Runtime override: systemd units / wrappers may export these without a
+    // rebuild. Complements the compile-time option_env! defaults above.
+    for k in ["SIMPLEDESK_LAN_UPLOAD_URL", "SIMPLEDESK_WAN_UPLOAD_URL"] {
+        if let Ok(v) = std::env::var(k) {
+            let v = v.trim();
+            if !v.is_empty() && !urls.iter().any(|u| u == v) {
+                urls.push(v.to_string());
+            }
+        }
+    }
     for d in [LAN_UPLOAD_URL, WAN_UPLOAD_URL] {
         if !d.is_empty() && !urls.iter().any(|u| u == d) {
             urls.push(d.to_string());
