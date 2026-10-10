@@ -142,6 +142,67 @@ pub fn append_file_event(path: &Path, dir: &str, op_path: &str, items: &[(String
     }
 }
 
+// ---------------------------------------------------------------------------
+// Terminal command capture. connection.rs line-buffers the typed input of
+// terminal sessions and hands completed lines to append_terminal_line(), so
+// the audit console can show WHAT was typed in a terminal session, not just
+// that one happened. Capped so a chatty session cannot blow up the sidecar.
+const TERM_LINE_MAX_CHARS: usize = 2000; // chars kept per command line
+const TERM_LINES_MAX: usize = 500; // command lines kept per session sidecar
+
+/// Record one completed input line (already cleaned by clean_terminal_line)
+/// in the sidecar's "term" array. Best effort: never panics, never blocks.
+pub fn append_terminal_line(path: &Path, cmd: &str) {
+    if cmd.trim().is_empty() {
+        return;
+    }
+    let Ok(raw) = fs::read_to_string(path) else { return };
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return;
+    };
+    if !v["term"].is_array() {
+        v["term"] = json!([]);
+    }
+    if let Some(arr) = v["term"].as_array_mut() {
+        if arr.len() >= TERM_LINES_MAX {
+            v["term_truncated"] = json!(true);
+        } else {
+            let cmd: String = cmd.chars().take(TERM_LINE_MAX_CHARS).collect();
+            let ev = json!({
+                "ts": chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                "in": cmd,
+            });
+            arr.push(ev);
+        }
+    }
+    allow_err_write(path, v.to_string());
+}
+
+/// Strip ANSI escapes and control characters from one raw input line,
+/// honoring backspace (0x7f/0x08). UTF-8 safe: filters bytes, decodes once.
+pub fn clean_terminal_line(bytes: &[u8]) -> String {
+    let mut kept: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut esc = false;
+    for &b in bytes {
+        if esc {
+            // ANSI CSI: swallow until the final byte in 0x40..=0x7e.
+            if (0x40..=0x7e).contains(&b) {
+                esc = false;
+            }
+            continue;
+        }
+        match b {
+            0x1b => esc = true,
+            0x7f | 0x08 => {
+                kept.pop();
+            }
+            _ if b >= 0x20 => kept.push(b),
+            _ => {}
+        }
+    }
+    String::from_utf8_lossy(&kept).to_string()
+}
+
 fn allow_err_write(path: &Path, content: String) {
     if let Err(e) = fs::write(path, content) {
         log::warn!("audit meta finalize failed: {}", e);

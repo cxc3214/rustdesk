@@ -449,6 +449,8 @@ pub struct Connection {
     conn_audit_two_factor: ConnAuditTwoFactor,
     // SimpleDesk audit: session-meta sidecar written for the recording uploader.
     audit_meta_file: Option<std::path::PathBuf>,
+    // SimpleDesk audit: per-terminal typed-input line buffers (terminal_id -> bytes).
+    terminal_input_buf: std::collections::HashMap<i32, Vec<u8>>,
     // Tracks read job IDs delegated to CM process.
     // When a read job is delegated to CM (via FS::ReadFile), the job id is added here.
     // Used to filter stale responses (FileBlockFromCM, FileReadDone, etc.) for
@@ -661,6 +663,7 @@ impl Connection {
             conn_audit_primary_auth: ConnAuditPrimaryAuth::None,
             conn_audit_two_factor: ConnAuditTwoFactor::None,
             audit_meta_file: None,
+            terminal_input_buf: std::collections::HashMap::new(),
         };
         let addr = hbb_common::try_into_v4(addr);
         if !conn.on_open(addr).await {
@@ -6264,6 +6267,34 @@ impl Connection {
             // unreacheable, but keep it for safety
             bail!("Terminal user token is not set.");
         };
+        // SimpleDesk audit: line-buffer typed terminal input and record the
+        // completed lines into this connection's session-meta sidecar, so a
+        // terminal session shows its command history in the audit console.
+        if let Some(terminal_action::Union::Data(data)) = &action.union {
+            if let Some(meta) = self.audit_meta_file.clone() {
+                let buf = self.terminal_input_buf.entry(data.terminal_id).or_default();
+                for &b in data.data.iter() {
+                    match b {
+                        b'\n' | b'\r' => {
+                            let line = crate::audit_upload::clean_terminal_line(buf);
+                            crate::audit_upload::append_terminal_line(&meta, &line);
+                            buf.clear();
+                        }
+                        0x7f | 0x08 => {
+                            buf.pop();
+                        }
+                        _ => buf.push(b),
+                    }
+                }
+                if buf.len() > 4096 {
+                    // Runaway paste without a newline: flush what we have.
+                    let line = crate::audit_upload::clean_terminal_line(buf);
+                    crate::audit_upload::append_terminal_line(&meta, &line);
+                    buf.clear();
+                }
+            }
+        }
+
         let mut proxy = terminal_service::TerminalServiceProxy::new(
             self.terminal_service_id.clone(),
             Some(self.terminal_persistent),
