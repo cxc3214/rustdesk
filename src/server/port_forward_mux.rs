@@ -359,7 +359,7 @@ mod tests {
         rt().block_on(async {
             let port = echo_target().await;
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port));
+            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port), std::sync::Arc::new(PfMuxStats::default()));
             mux.handle(open(1, port), || true);
             mux.handle(data(1, b"ping"), || true);
             assert_eq!(opened(&next_frame(&mut rx).await), (1, true));
@@ -375,7 +375,7 @@ mod tests {
             let port = l.local_addr().unwrap().port();
             drop(l);
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port));
+            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port), std::sync::Arc::new(PfMuxStats::default()));
             mux.handle(open(1, port), || true);
             mux.handle(data(1, b"lost"), || true);
             assert_eq!(opened(&next_frame(&mut rx).await), (1, false));
@@ -388,7 +388,7 @@ mod tests {
         rt().block_on(async {
             let port = echo_target().await;
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port));
+            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port), std::sync::Arc::new(PfMuxStats::default()));
             mux.handle(open(1, port), || false);
             assert_eq!(opened(&next_frame(&mut rx).await), (1, false));
             assert_eq!(mux.live_channels(), 0);
@@ -400,7 +400,7 @@ mod tests {
         rt().block_on(async {
             let port = echo_target().await;
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port));
+            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port), std::sync::Arc::new(PfMuxStats::default()));
             mux.handle(open(1, port), || true);
             assert_eq!(opened(&next_frame(&mut rx).await), (1, true));
             // `enable-tunnel` is consulted per `open`, so turning it off
@@ -421,7 +421,7 @@ mod tests {
             // that same poll loses: no `opened` may ever be sent.
             let port = echo_target().await;
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port));
+            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port), std::sync::Arc::new(PfMuxStats::default()));
             mux.handle(open(1, port), || true);
             mux.handle(close(1), || true);
             assert!(tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await.is_err());
@@ -434,7 +434,7 @@ mod tests {
         rt().block_on(async {
             let port = echo_target().await;
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port));
+            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port), std::sync::Arc::new(PfMuxStats::default()));
             mux.handle(open(1, port), || true);
             mux.handle(open(2, port), || true);
             let mut seen = 0;
@@ -459,7 +459,7 @@ mod tests {
         rt().block_on(async {
             let port = echo_target().await;
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port));
+            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port), std::sync::Arc::new(PfMuxStats::default()));
             mux.handle(open(1, port), || true);
             opened(&next_frame(&mut rx).await);
             let too_much = vec![0u8; CHANNEL_WINDOW as usize + 1];
@@ -483,7 +483,7 @@ mod tests {
             let a = echo_target().await;
             let b = echo_target().await;
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", a));
+            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", a), std::sync::Arc::new(PfMuxStats::default()));
             mux.handle(open(1, a), || true);
             assert_eq!(opened(&next_frame(&mut rx).await), (1, true));
             // Approval was for target a; b needs a login of its own.
@@ -505,7 +505,7 @@ mod tests {
         rt().block_on(async {
             let port = echo_target().await;
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port));
+            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port), std::sync::Arc::new(PfMuxStats::default()));
             mux.handle(open(1, port), || true);
             // The channel task has not run yet: the demultiplexer alone
             // decides what may sit in the queue before `opened`.
@@ -551,7 +551,7 @@ mod tests {
         rt().block_on(async {
             let port = drop_target().await;
             let (tx, mut rx) = mpsc::unbounded_channel();
-            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port));
+            let mut mux = PortForwardMux::new(tx, format!("127.0.0.1:{}", port), std::sync::Arc::new(PfMuxStats::default()));
             for id in 1..=(MAX_CHANNELS as i32 * 2) {
                 mux.handle(open(id, port), || true);
                 assert_eq!(opened(&next_frame(&mut rx).await), (id, true));

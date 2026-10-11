@@ -1540,7 +1540,7 @@ mod tests {
         fn fake_controlled(mut stream: Stream, login_target: String) {
             tokio::spawn(async move {
                 let (tx, mut rx) = mpsc::unbounded_channel::<(Instant, Arc<Message>)>();
-                let mut mux = PortForwardMux::new(tx, login_target);
+                let mut mux = PortForwardMux::new(tx, login_target, std::sync::Arc::new(PfMuxStats::default()));
                 loop {
                     tokio::select! {
                         Some((_, m)) = rx.recv() => {
