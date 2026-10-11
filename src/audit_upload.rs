@@ -112,7 +112,7 @@ pub fn write_session_meta(
 
 /// Called by connection.rs when the session closes: stamps end time and
 /// duration into the sidecar.
-pub fn finalize_session_meta(path: &Path) {
+pub fn finalize_session_meta(path: &Path, tunnel: Option<(Option<bool>, u64, u64)>) {
     let Ok(raw) = fs::read_to_string(path) else { return };
     let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&raw) else {
         return;
@@ -121,6 +121,14 @@ pub fn finalize_session_meta(path: &Path) {
     v["ended_at"] = json!(now.format("%Y-%m-%d %H:%M:%S").to_string());
     if let Some(start) = v["started_epoch"].as_i64() {
         v["duration_s"] = json!(std::cmp::max(0, now.timestamp() - start));
+    }
+    // SimpleDesk audit: tunnel traffic volume and target reachability.
+    if let Some((conn_ok, tx, rx)) = tunnel {
+        if let Some(ok) = conn_ok {
+            v["tunnel_connect"] = json!(ok);
+        }
+        v["tunnel_tx"] = json!(tx);
+        v["tunnel_rx"] = json!(rx);
     }
     allow_err_write(path, v.to_string());
 }

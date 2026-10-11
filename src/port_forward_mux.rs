@@ -279,6 +279,7 @@ async fn relay_socket_to_tunnel<R: AsyncRead + Unpin>(
     prebuf: Vec<u8>,
     credit: Arc<SendCredit>,
     sink: FrameSink,
+    stats: Option<Arc<PfMuxStats>>,
     mut cancel: watch::Receiver<bool>,
 ) -> RelayEnd {
     let mut reader = std::io::Cursor::new(prebuf).chain(reader);
@@ -305,6 +306,9 @@ async fn relay_socket_to_tunnel<R: AsyncRead + Unpin>(
         if got == 0 {
             return RelayEnd::LocalEof;
         }
+        if let Some(st) = &stats {
+            st.down.fetch_add(got as u64, std::sync::atomic::Ordering::Relaxed);
+        }
         let frame = data_msg(id, Bytes::copy_from_slice(&scratch[..got]));
         if sink.send_ordered(frame).await.is_err() {
             return RelayEnd::TunnelGone;
@@ -321,6 +325,7 @@ async fn relay_tunnel_to_socket<W: AsyncWrite + Unpin>(
     mut inbound: mpsc::UnboundedReceiver<Inbound>,
     window: Arc<Mutex<RecvWindow>>,
     sink: FrameSink,
+    stats: Option<Arc<PfMuxStats>>,
     mut cancel: watch::Receiver<bool>,
 ) -> RelayEnd {
     let mut pending: std::collections::VecDeque<Bytes> = initial.into();
@@ -347,6 +352,9 @@ async fn relay_tunnel_to_socket<W: AsyncWrite + Unpin>(
         if !written {
             return RelayEnd::LocalEof;
         }
+        if let Some(st) = &stats {
+            st.up.fetch_add(chunk.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        }
         let update = window.lock().unwrap().drained(chunk.len());
         if let Some(add) = update {
             if sink.send_control(window_update_msg(id, add)).is_err() {
@@ -354,6 +362,15 @@ async fn relay_tunnel_to_socket<W: AsyncWrite + Unpin>(
             }
         }
     }
+}
+
+/// Audit byte counters for one multiplexed channel: `up` counts
+/// controller->target bytes, `down` target->controller. The controlled side
+/// aggregates them into the session's audit sidecar at close.
+#[derive(Default)]
+pub struct PfMuxStats {
+    pub up: std::sync::atomic::AtomicU64,
+    pub down: std::sync::atomic::AtomicU64,
 }
 
 /// Runs both halves as independent tasks; whichever ends first cancels the
@@ -373,6 +390,7 @@ pub async fn run_channel<R, W>(
     window: Arc<Mutex<RecvWindow>>,
     inbound: mpsc::UnboundedReceiver<Inbound>,
     sink: FrameSink,
+    stats: Option<Arc<PfMuxStats>>,
     mut teardown: watch::Receiver<bool>,
 ) where
     R: AsyncRead + Unpin + Send + 'static,
@@ -380,10 +398,10 @@ pub async fn run_channel<R, W>(
 {
     let (cancel_tx, cancel_rx) = watch::channel(false);
     let mut to_tunnel = tokio::spawn(relay_socket_to_tunnel(
-        id, reader, prebuf, credit, sink.clone(), cancel_rx.clone(),
+        id, reader, prebuf, credit, sink.clone(), stats.clone(), cancel_rx.clone(),
     ));
     let mut to_socket = tokio::spawn(relay_tunnel_to_socket(
-        id, writer, initial_out, inbound, window, sink.clone(), cancel_rx,
+        id, writer, initial_out, inbound, window, sink.clone(), stats, cancel_rx,
     ));
     let (first, second) = tokio::select! {
         r = &mut to_tunnel => {
@@ -581,7 +599,7 @@ mod tunnel {
             let handle = self.clone();
             tokio::spawn(async move {
                 if sink.send_ordered(open).await.is_ok() {
-                    run_channel(id, reader, writer, prebuf, Vec::new(), credit, window, inbound_rx, sink, teardown).await;
+                    run_channel(id, reader, writer, prebuf, Vec::new(), credit, window, inbound_rx, sink, None, teardown).await;
                 }
                 handle.channels.lock().unwrap().remove(&id);
             });
@@ -951,7 +969,7 @@ mod tests {
         let sink = FrameSink::Queued { data: data_tx, control: control_tx };
         let teardown_rx = teardown.subscribe();
         let task = tokio::spawn(run_channel(
-            id, r, w, prebuf, initial_out, credit.clone(), window.clone(), inbound_rx, sink, teardown_rx,
+            id, r, w, prebuf, initial_out, credit.clone(), window.clone(), inbound_rx, sink, None, teardown_rx,
         ));
         Harness { data_rx, control_rx, inbound_tx, credit, window, local, teardown, task }
     }

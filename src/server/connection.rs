@@ -368,6 +368,12 @@ pub struct Connection {
     port_forward_socket: Option<Framed<TcpStream, BytesCodec>>,
     port_forward_mux: Option<super::port_forward_mux::PortForwardMux>,
     port_forward_address: String,
+    audit_pf_rdp: bool,
+    audit_pf_connect: Option<bool>,
+    audit_pf_tx: u64,
+    audit_pf_rx: u64,
+    audit_pf_mux: Option<std::sync::Arc<crate::port_forward_mux::PfMuxStats>>,
+    audit_meta_stype: String,
     tx_to_cm: mpsc::UnboundedSender<ipc::Data>,
     authorized: bool,
     // The place among the unauthorized connections; given back at authorization.
@@ -588,6 +594,12 @@ impl Connection {
             port_forward_socket: None,
             port_forward_mux: None,
             port_forward_address: "".to_owned(),
+            audit_pf_rdp: false,
+            audit_pf_connect: None,
+            audit_pf_tx: 0,
+            audit_pf_rx: 0,
+            audit_pf_mux: None,
+            audit_meta_stype: "".to_owned(),
             tx_to_cm,
             authorized: false,
             unauthorized_id: Some(unauthorized),
@@ -1235,7 +1247,24 @@ impl Connection {
         }));
         // SimpleDesk audit: stamp end time + duration into the sidecar.
         if let Some(p) = conn.audit_meta_file.take() {
-            crate::audit_upload::finalize_session_meta(&p);
+            let tun = if conn.audit_meta_stype == "tunnel" {
+                let (mu, md) = conn
+                    .audit_pf_mux
+                    .as_ref()
+                    .map(|s| (
+                        s.up.load(std::sync::atomic::Ordering::Relaxed),
+                        s.down.load(std::sync::atomic::Ordering::Relaxed),
+                    ))
+                    .unwrap_or((0, 0));
+                Some((
+                    conn.audit_pf_connect,
+                    conn.audit_pf_tx + mu,
+                    conn.audit_pf_rx + md,
+                ))
+            } else {
+                None
+            };
+            crate::audit_upload::finalize_session_meta(&p, tun);
             // Terminal/tunnel/camera/file sessions have no recording for
             // the uploader to find: post their meta directly.
             crate::audit_upload::report_session_meta_now(p);
@@ -1368,7 +1397,10 @@ impl Connection {
                     res = forward.next() => {
                         if let Some(res) = res {
                             last_recv_time = Instant::now();
-                            self.stream.send_bytes(res?.into()).await?;
+                            let chunk = res?;
+                            // audit: target->controller (down)
+                            self.audit_pf_rx += chunk.len() as u64;
+                            self.stream.send_bytes(chunk.into()).await?;
                         } else {
                             bail!("Forward reset by the peer");
                         }
@@ -1376,7 +1408,10 @@ impl Connection {
                     res = self.stream.next() => {
                         if let Some(res) = res {
                             last_recv_time = Instant::now();
-                            timeout(SEND_TIMEOUT_OTHER, forward.send(res?)).await??;
+                            let chunk = res?;
+                            // audit: controller->target (up)
+                            self.audit_pf_tx += chunk.len() as u64;
+                            timeout(SEND_TIMEOUT_OTHER, forward.send(chunk)).await??;
                         } else {
                             bail!("Stream reset by the peer");
                         }
@@ -1821,20 +1856,25 @@ impl Connection {
             crate::port_forward_mux::cap_packet_size(&mut self.stream);
             // `inner.tx` is set for the connection's whole life; `None` here is
             // unreachable, and refusing the login is the only honest answer.
+            let pf_stats = std::sync::Arc::new(crate::port_forward_mux::PfMuxStats::default());
+            self.audit_pf_mux = Some(pf_stats.clone());
             self.port_forward_mux = self.inner.tx.clone().map(|tx| {
-                super::port_forward_mux::PortForwardMux::new(tx, self.port_forward_address.clone())
+                super::port_forward_mux::PortForwardMux::new(tx, self.port_forward_address.clone(), pf_stats)
             });
             return self.port_forward_mux.is_some();
         }
         let mut pf = pf.clone();
         let (mut addr, is_rdp) = Self::normalize_port_forward_target(&mut pf);
+        self.audit_pf_rdp = is_rdp;
         self.port_forward_address = addr.clone();
         match timeout(3000, TcpStream::connect(&addr)).await {
             Ok(Ok(sock)) => {
+                self.audit_pf_connect = Some(true);
                 self.port_forward_socket = Some(Framed::new(sock, BytesCodec::new()));
                 true
             }
             Ok(Err(e)) => {
+                self.audit_pf_connect = Some(false);
                 log::warn!("Port forward connect failed for {}: {}", addr, e);
                 if is_rdp {
                     addr = "RDP".to_owned();
@@ -1847,6 +1887,7 @@ impl Connection {
                 false
             }
             Err(e) => {
+                self.audit_pf_connect = Some(false);
                 log::warn!("Port forward connect timed out for {}: {}", addr, e);
                 if is_rdp {
                     addr = "RDP".to_owned();
@@ -1955,13 +1996,17 @@ impl Connection {
         // SimpleDesk audit: drop the session-meta sidecar now that the peer
         // identity is known; finalized with end time on connection close.
         if crate::audit_upload::record_meta_enabled() {
-            let (stype, detail) = match conn_type {
+            let (stype, mut detail) = match conn_type {
                 1 => ("file", String::new()),
                 2 => ("tunnel", self.port_forward_address.clone()),
                 3 => ("camera", String::new()),
                 4 => ("terminal", String::new()),
                 _ => ("desktop", String::new()),
             };
+            self.audit_meta_stype = stype.to_owned();
+            if stype == "tunnel" && self.audit_pf_rdp {
+                detail = format!("{detail} (rdp)");
+            }
             self.audit_meta_file = crate::audit_upload::write_session_meta(
                 &self.lr.my_id,
                 &self.lr.my_name,
@@ -2963,7 +3008,8 @@ impl Connection {
                         sleep(1.).await;
                         return false;
                     }
-                    let (addr, _is_rdp) = Self::normalize_port_forward_target(&mut pf);
+                    let (addr, is_rdp) = Self::normalize_port_forward_target(&mut pf);
+                    self.audit_pf_rdp = is_rdp;
                     self.port_forward_address = addr;
                 }
                 _ => {
