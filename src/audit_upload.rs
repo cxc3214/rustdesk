@@ -101,6 +101,16 @@ pub fn write_session_meta(
         "started_at": now.format("%Y-%m-%d %H:%M:%S").to_string(),
         "started_epoch": epoch,
     });
+    // SimpleDesk 1.5.0.5: 本机（主控/被控各自）登录账号写入审计元数据。
+    if let Ok(ui) =
+        serde_json::from_str::<serde_json::Value>(&crate::LocalConfig::get_option("user_info"))
+    {
+        if let Some(n) = ui["name"].as_str() {
+            if !n.is_empty() {
+                v["acct"] = json!(n);
+            }
+        }
+    }
     match fs::write(&file, v.to_string()) {
         Ok(_) => Some(file),
         Err(e) => {
