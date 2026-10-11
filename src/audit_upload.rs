@@ -91,7 +91,7 @@ pub fn write_session_meta(
         now.format("%Y%m%d%H%M%S"),
         uniq
     ));
-    let v = json!({
+    let mut v = json!({
         "peer_id": peer_id,
         "peer_name": peer_name,
         "peer_ip": peer_ip,
@@ -103,7 +103,7 @@ pub fn write_session_meta(
     });
     // SimpleDesk 1.5.0.5: 本机（主控/被控各自）登录账号写入审计元数据。
     if let Ok(ui) =
-        serde_json::from_str::<serde_json::Value>(&crate::LocalConfig::get_option("user_info"))
+        serde_json::from_str::<serde_json::Value>(&hbb_common::config::LocalConfig::get_option("user_info"))
     {
         if let Some(n) = ui["name"].as_str() {
             if !n.is_empty() {
