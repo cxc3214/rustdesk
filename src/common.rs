@@ -1098,8 +1098,10 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
 // BUMP IT on every release, and bump latest.json on the download site.
 pub const SIMPLEDESK_UPDATE_META_URL: &str =
     "https://desk.simplesoft.cn/downloads/latest.json";
-pub const SIMPLEDESK_VERSION: &str = "1.5.0.6";
+pub const SIMPLEDESK_VERSION: &str = "1.5.0.7";
 pub const SIMPLEDESK_DOWNLOAD_BASE: &str = "https://desk.simplesoft.cn/downloads";
+/// Account backend used when the user opens the login page.
+pub const SIMPLEDESK_API_SERVER: &str = "https://desk.simplesoft.cn";
 
 async fn simpledesk_do_check_software_update() -> hbb_common::ResultType<()> {
     let client = create_http_client_async(TlsType::Rustls, false);
@@ -2638,6 +2640,8 @@ pub fn is_custom_client() -> bool {
 /// - Incoming recording + audit meta are MANDATORY: re-assert "Y" on every
 ///   startup so a flipped checkbox cannot stick (runtime gates ignore "N").
 /// - Auto-update defaults to ON, but only when unset (user opt-out honored).
+/// - API server is seeded when unset so login hits our account backend
+///   (empty would fall back to admin.rustdesk.com, which rejects passwords).
 pub fn simpledesk_seed_default_options() {
     hbb_common::config::Config::set_option(
         base::config::keys::OPTION_ALLOW_AUTO_RECORD_INCOMING.to_string(),
@@ -2651,6 +2655,19 @@ pub fn simpledesk_seed_default_options() {
             "Y".to_string(),
         );
         log::info!("SimpleDesk: seeded allow-auto-update=Y (fleet default)");
+    }
+    // API server: without it the login falls back to admin.rustdesk.com,
+    // which rejects password logins. Seed our backend when unset; honor an
+    // admin's manual override in Settings > Network.
+    if hbb_common::config::Config::get_option("api-server").is_empty() {
+        hbb_common::config::Config::set_option(
+            "api-server".to_string(),
+            SIMPLEDESK_API_SERVER.to_string(),
+        );
+        log::info!(
+            "SimpleDesk: seeded api-server={} (fleet default)",
+            SIMPLEDESK_API_SERVER
+        );
     }
 }
 
