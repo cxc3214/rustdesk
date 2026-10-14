@@ -1065,10 +1065,14 @@ pub fn main_set_option(key: String, value: String) {
 }
 
 pub fn main_get_options() -> String {
+    crate::common::simpledesk_seed_default_options();
+
     get_options()
 }
 
 pub fn main_get_options_sync() -> SyncReturn<String> {
+    crate::common::simpledesk_seed_default_options();
+
     SyncReturn(get_options())
 }
 

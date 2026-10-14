@@ -1098,7 +1098,7 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
 // BUMP IT on every release, and bump latest.json on the download site.
 pub const SIMPLEDESK_UPDATE_META_URL: &str =
     "https://desk.simplesoft.cn/downloads/latest.json";
-pub const SIMPLEDESK_VERSION: &str = "1.5.0.5";
+pub const SIMPLEDESK_VERSION: &str = "1.5.0.6";
 pub const SIMPLEDESK_DOWNLOAD_BASE: &str = "https://desk.simplesoft.cn/downloads";
 
 async fn simpledesk_do_check_software_update() -> hbb_common::ResultType<()> {
@@ -2628,7 +2628,23 @@ pub fn get_builtin_option(key: &str) -> String {
 
 #[inline]
 pub fn is_custom_client() -> bool {
-    get_app_name() != "RustDesk"
+    // SimpleDesk: every distributed build is our custom client (bundled server
+    // config + our own update source), even though APP_NAME stays "RustDesk"
+    // (the Windows service key/display keep the upstream branding).
+    true
+}
+
+/// SimpleDesk: fleet default - the auto-update checkbox defaults to ON.
+/// Seeds the option only when it is unset, so an explicit "N" opt-out
+/// (user turned it off) is never overwritten.
+pub fn simpledesk_seed_default_options() {
+    if is_custom_client()
+        && hbb_common::config::Config::get_option(base::config::keys::OPTION_ALLOW_AUTO_UPDATE)
+            .is_empty()
+    {
+        hbb_common::config::Config::set_option(base::config::keys::OPTION_ALLOW_AUTO_UPDATE, "Y");
+        log::info!("SimpleDesk: seeded allow-auto-update=Y (fleet default)");
+    }
 }
 
 pub fn verify_login(_raw: &str, _id: &str) -> bool {
