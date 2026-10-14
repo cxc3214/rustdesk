@@ -2634,13 +2634,17 @@ pub fn is_custom_client() -> bool {
     true
 }
 
-/// SimpleDesk: fleet default - the auto-update checkbox defaults to ON.
-/// Seeds the option only when it is unset, so an explicit "N" opt-out
-/// (user turned it off) is never overwritten.
+/// SimpleDesk: fleet policy defaults.
+/// - Incoming recording + audit meta are MANDATORY: re-assert "Y" on every
+///   startup so a flipped checkbox cannot stick (runtime gates ignore "N").
+/// - Auto-update defaults to ON, but only when unset (user opt-out honored).
 pub fn simpledesk_seed_default_options() {
-    if is_custom_client()
-        && hbb_common::config::Config::get_option(base::config::keys::OPTION_ALLOW_AUTO_UPDATE)
-            .is_empty()
+    hbb_common::config::Config::set_option(
+        base::config::keys::OPTION_ALLOW_AUTO_RECORD_INCOMING,
+        "Y",
+    );
+    if hbb_common::config::Config::get_option(base::config::keys::OPTION_ALLOW_AUTO_UPDATE)
+        .is_empty()
     {
         hbb_common::config::Config::set_option(base::config::keys::OPTION_ALLOW_AUTO_UPDATE, "Y");
         log::info!("SimpleDesk: seeded allow-auto-update=Y (fleet default)");

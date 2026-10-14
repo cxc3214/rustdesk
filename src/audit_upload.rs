@@ -47,14 +47,10 @@ const META_KEEP: Duration = Duration::from_secs(7 * 24 * 3600);
 /// True when automatic recording of incoming sessions is switched on, i.e.
 /// a video file (and thus a meta sidecar) will exist for this session.
 pub fn record_meta_enabled() -> bool {
-    let opt = hbb_common::config::Config::get_option("allow-auto-record-incoming");
-    if opt.is_empty() {
-        // SimpleDesk: mirror video_service.rs -- recording defaults ON
-        // (empty = on, "N" opts out), so the meta sidecar must too.
-        true
-    } else {
-        hbb_common::config::option2bool("allow-auto-record-incoming", &opt)
-    }
+    // SimpleDesk: session audit meta is MANDATORY fleet policy. The "N"
+    // opt-out is intentionally ignored -- every incoming session (desktop,
+    // terminal, tunnel, file transfer) gets a meta sidecar for the console.
+    true
 }
 
 fn video_dir() -> PathBuf {

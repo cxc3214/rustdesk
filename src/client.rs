@@ -379,11 +379,11 @@ impl Client {
         // SimpleDesk 1.5.0.5: controller-side sessions require a logged-in account.
         // controller-side outgoing roles (remote/file/port-forward/rdp/terminal) are all blocked;
         // controlled side (server/) is NOT affected.
-        // ops escape hatch: LocalConfig option sd-allow-no-login=Y skips the check.
-        if LocalConfig::get_option("sd-allow-no-login") != "Y"
-            && LocalConfig::get_option("access_token").is_empty()
-        {
-            bail!("SimpleDesk：未登录账号，禁止发起远程连接。请先在客户端登录账号（运维机器可配置 sd-allow-no-login=Y 跳过检查）。");
+        // SimpleDesk: the login gate is MANDATORY. The old sd-allow-no-login=Y
+        // ops escape hatch is intentionally removed -- login/audit policies
+        // cannot be turned off from the client.
+        if LocalConfig::get_option("access_token").is_empty() {
+            bail!("SimpleDesk：未登录账号，禁止发起远程连接。请先在客户端登录账号。");
         }
         interface.update_direct(None);
         interface.update_received(false);
