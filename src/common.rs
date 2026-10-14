@@ -2640,13 +2640,16 @@ pub fn is_custom_client() -> bool {
 /// - Auto-update defaults to ON, but only when unset (user opt-out honored).
 pub fn simpledesk_seed_default_options() {
     hbb_common::config::Config::set_option(
-        base::config::keys::OPTION_ALLOW_AUTO_RECORD_INCOMING,
-        "Y",
+        base::config::keys::OPTION_ALLOW_AUTO_RECORD_INCOMING.to_string(),
+        "Y".to_string(),
     );
     if hbb_common::config::Config::get_option(base::config::keys::OPTION_ALLOW_AUTO_UPDATE)
         .is_empty()
     {
-        hbb_common::config::Config::set_option(base::config::keys::OPTION_ALLOW_AUTO_UPDATE, "Y");
+        hbb_common::config::Config::set_option(
+            base::config::keys::OPTION_ALLOW_AUTO_UPDATE.to_string(),
+            "Y".to_string(),
+        );
         log::info!("SimpleDesk: seeded allow-auto-update=Y (fleet default)");
     }
 }
