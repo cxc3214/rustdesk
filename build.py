@@ -61,6 +61,15 @@ def system2(cmd):
 
 
 def get_version():
+    # SimpleDesk: package version follows SIMPLEDESK_VERSION in src/common.rs,
+    # so dpkg/rpm/dmg metadata stays in sync with every build automatically.
+    try:
+        with open("src/common.rs", encoding="utf-8") as fh:
+            m = re.search(r'SIMPLEDESK_VERSION:\s*&str\s*=\s*"([^"]+)"', fh.read())
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
     with open("Cargo.toml", encoding="utf-8") as fh:
         for line in fh:
             if line.startswith("version"):
