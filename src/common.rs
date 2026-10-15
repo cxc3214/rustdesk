@@ -1098,7 +1098,7 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
 // BUMP IT on every release, and bump latest.json on the download site.
 pub const SIMPLEDESK_UPDATE_META_URL: &str =
     "https://desk.simplesoft.cn/downloads/latest.json";
-pub const SIMPLEDESK_VERSION: &str = "1.5.0.7";
+pub const SIMPLEDESK_VERSION: &str = "1.5.0.8";
 pub const SIMPLEDESK_DOWNLOAD_BASE: &str = "https://desk.simplesoft.cn/downloads";
 /// Account backend used when the user opens the login page.
 pub const SIMPLEDESK_API_SERVER: &str = "https://desk.simplesoft.cn";

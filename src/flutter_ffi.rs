@@ -1187,6 +1187,9 @@ pub fn main_discover() {
 }
 
 pub fn main_get_api_server() -> String {
+    // Login path hardening: guarantee the fleet api-server default even if
+    // init ordering skips main_init. Idempotent, honors manual overrides.
+    crate::common::simpledesk_seed_default_options();
     get_api_server()
 }
 
@@ -1831,6 +1834,12 @@ pub fn cm_get_clients_length() -> usize {
 }
 
 pub fn main_init(app_dir: String, custom_client_config: String) {
+    // UI startup entry (desktop & mobile): seed fleet defaults BEFORE any
+    // page reads options. The login page reads api-server; if it is still
+    // empty the login falls back to admin.rustdesk.com (rejects passwords,
+    // shows public OAuth buttons). 1.5.0.7 only hooked main_get_options,
+    // which desktop never calls - fixed in 1.5.0.8.
+    crate::common::simpledesk_seed_default_options();
     initialize(&app_dir, &custom_client_config);
 }
 
